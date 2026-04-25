@@ -62,6 +62,7 @@ type videoRequest struct {
 	Image           *referenceImage  `json:"image,omitempty"`
 	ReferenceImages []referenceImage `json:"reference_images,omitempty"`
 	Video           *videoRef        `json:"video,omitempty"`
+	VideoURL        string           `json:"video_url,omitempty"`
 }
 
 type submitResponse struct {
@@ -100,9 +101,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapper(err, "get_task_request_failed", http.StatusBadRequest)
 	}
-	a.mode = strings.ToLower(metadataString(req.Metadata, "mode"))
-	if a.mode == "" && (metadataString(req.Metadata, "video_url") != "" || metadataString(req.Metadata, "videoUrl") != "") {
-		a.mode = "edit-video"
+	a.mode = resolveMode(req)
+	if hasVideoInput(req) && hasImageInput(req) {
+		return service.TaskErrorWrapper(fmt.Errorf("xAI video requests cannot include both video and image inputs"), "invalid_request", http.StatusBadRequest)
 	}
 	info.Action = resolveAction(c, req)
 	return nil
@@ -235,10 +236,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	seconds := resolveDuration(req, info.Action)
+	seconds := resolveOutputDuration(req)
 	resolutionRatio := resolveResolutionRatio(req, info.Action)
+	outputPrice := outputPricePerSecond(info)
 	inputCost := estimateInputCost(req, info, info.Action)
-	outputCost := baseOutputPricePerSecond * float64(seconds) * resolutionRatio
+	outputCost := outputPrice * float64(seconds) * resolutionRatio
 	inputAdjustment := 1.0
 	if outputCost > 0 && inputCost > 0 {
 		inputAdjustment = (outputCost + inputCost) / outputCost
@@ -303,7 +305,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 }
 
 func resolveAction(c *gin.Context, req relaycommon.TaskSubmitReq) string {
-	mode := strings.ToLower(metadataString(req.Metadata, "mode"))
+	mode := resolveMode(req)
 	if mode == "extend-video" || strings.Contains(c.Request.URL.Path, "/remix") {
 		return constant.TaskActionRemix
 	}
@@ -318,41 +320,45 @@ func resolveAction(c *gin.Context, req relaycommon.TaskSubmitReq) string {
 
 func buildVideoRequest(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) videoRequest {
 	body := videoRequest{
-		Model:       info.UpstreamModelName,
-		Prompt:      req.Prompt,
-		Duration:    req.Duration,
-		AspectRatio: metadataString(req.Metadata, "aspect_ratio"),
-		Resolution:  resolveResolution(req, info.Action),
+		Model:  info.UpstreamModelName,
+		Prompt: req.Prompt,
 	}
 	if body.Model == "" {
 		body.Model = req.Model
 	}
-	if body.Duration <= 0 {
-		if seconds, err := strconv.Atoi(req.Seconds); err == nil && seconds > 0 {
-			body.Duration = seconds
+
+	mode := resolveMode(req)
+	if info.Action == constant.TaskActionRemix || mode == "extend-video" {
+		body.Duration = resolveOutputDuration(req)
+		if url := resolveInputVideoURL(req, info); url != "" {
+			body.Video = &videoRef{URL: url}
 		}
+		return body
 	}
+
+	if mode == "edit-video" {
+		body.VideoURL = resolveInputVideoURL(req, info)
+		return body
+	}
+
+	body.Duration = resolveOutputDuration(req)
+	body.AspectRatio = metadataString(req.Metadata, "aspect_ratio")
 	if body.AspectRatio == "" {
 		body.AspectRatio = metadataString(req.Metadata, "aspectRatio")
 	}
 	if body.AspectRatio == "" && req.Size != "" {
 		body.AspectRatio = sizeToAspectRatio(req.Size)
 	}
+	body.Resolution = resolveResolution(req, info.Action)
 	if body.Resolution == defaultResolution {
 		body.Resolution = ""
-	}
-
-	if info.Action == constant.TaskActionRemix || strings.EqualFold(metadataString(req.Metadata, "mode"), "extend-video") || strings.EqualFold(metadataString(req.Metadata, "mode"), "edit-video") {
-		if url := resolveInputVideoURL(req, info); url != "" {
-			body.Video = &videoRef{URL: url}
-		}
 	}
 
 	imageURL := firstNonEmpty(req.Image, metadataString(req.Metadata, "image_url"), metadataString(req.Metadata, "imageUrl"))
 	if imageURL == "" && len(req.Images) == 1 {
 		imageURL = req.Images[0]
 	}
-	if imageURL != "" && body.Video == nil {
+	if imageURL != "" {
 		body.Image = &referenceImage{URL: imageURL}
 	}
 
@@ -395,13 +401,7 @@ func originVideoURLAndDuration(info *relaycommon.RelayInfo) (string, float64) {
 	return originTask.GetResultURL(), duration
 }
 
-func resolveDuration(req relaycommon.TaskSubmitReq, action string) int {
-	if action == constant.TaskActionGenerate && strings.EqualFold(metadataString(req.Metadata, "mode"), "edit-video") {
-		if d := metadataNumber(req.Metadata, "input_video_seconds"); d > 0 {
-			return int(math.Ceil(d))
-		}
-		return defaultDurationSeconds
-	}
+func resolveOutputDuration(req relaycommon.TaskSubmitReq) int {
 	if req.Duration > 0 {
 		return req.Duration
 	}
@@ -415,9 +415,6 @@ func resolveDuration(req relaycommon.TaskSubmitReq, action string) int {
 }
 
 func resolveResolution(req relaycommon.TaskSubmitReq, action string) string {
-	if action == constant.TaskActionGenerate && strings.EqualFold(metadataString(req.Metadata, "mode"), "edit-video") {
-		return hdResolution
-	}
 	resolution := strings.ToLower(firstNonEmpty(metadataString(req.Metadata, "resolution"), metadataString(req.Metadata, "quality")))
 	if resolution == hdResolution {
 		return hdResolution
@@ -434,11 +431,11 @@ func resolveResolutionRatio(req relaycommon.TaskSubmitReq, action string) float6
 
 func estimateInputCost(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo, action string) float64 {
 	cost := 0.0
-	imageCount := countInputImages(req)
-	if imageCount > 0 {
+	if action != constant.TaskActionRemix && resolveMode(req) != "extend-video" && resolveMode(req) != "edit-video" {
+		imageCount := countGenerationInputImages(req)
 		cost += float64(imageCount) * inputImagePrice
 	}
-	if action == constant.TaskActionRemix || strings.EqualFold(metadataString(req.Metadata, "mode"), "extend-video") || strings.EqualFold(metadataString(req.Metadata, "mode"), "edit-video") {
+	if action == constant.TaskActionRemix || resolveMode(req) == "extend-video" || resolveMode(req) == "edit-video" {
 		seconds := metadataNumber(req.Metadata, "input_video_seconds")
 		if seconds <= 0 {
 			seconds = metadataNumber(req.Metadata, "inputVideoSeconds")
@@ -453,16 +450,41 @@ func estimateInputCost(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInf
 	return cost
 }
 
-func countInputImages(req relaycommon.TaskSubmitReq) int {
+func outputPricePerSecond(info *relaycommon.RelayInfo) float64 {
+	if info != nil && info.PriceData.ModelPrice > 0 {
+		return info.PriceData.ModelPrice
+	}
+	return baseOutputPricePerSecond
+}
+
+func resolveMode(req relaycommon.TaskSubmitReq) string {
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(req.Mode, metadataString(req.Metadata, "mode"))))
+	if mode == "" && (metadataString(req.Metadata, "video_url") != "" || metadataString(req.Metadata, "videoUrl") != "") {
+		return "edit-video"
+	}
+	return mode
+}
+
+func hasVideoInput(req relaycommon.TaskSubmitReq) bool {
+	return firstNonEmpty(metadataString(req.Metadata, "video_url"), metadataString(req.Metadata, "videoUrl"), req.InputReference) != ""
+}
+
+func hasImageInput(req relaycommon.TaskSubmitReq) bool {
+	return req.Image != "" || len(req.Images) > 0 || metadataString(req.Metadata, "image_url") != "" || metadataString(req.Metadata, "imageUrl") != "" || len(metadataSlice(req.Metadata, "reference_image_urls")) > 0 || len(metadataSlice(req.Metadata, "referenceImageUrls")) > 0
+}
+
+func countGenerationInputImages(req relaycommon.TaskSubmitReq) int {
 	count := 0
-	if req.Image != "" || metadataString(req.Metadata, "image_url") != "" || metadataString(req.Metadata, "imageUrl") != "" {
+	if firstNonEmpty(req.Image, metadataString(req.Metadata, "image_url"), metadataString(req.Metadata, "imageUrl")) != "" {
+		count++
+	} else if len(req.Images) == 1 {
 		count++
 	}
-	count += len(metadataSlice(req.Metadata, "reference_image_urls"))
-	count += len(metadataSlice(req.Metadata, "referenceImageUrls"))
-	if len(req.Images) == 1 && count == 0 {
-		count++
-	} else if len(req.Images) > 1 {
+	metadataRefs := append(metadataSlice(req.Metadata, "reference_image_urls"), metadataSlice(req.Metadata, "referenceImageUrls")...)
+	if len(metadataRefs) > 0 {
+		return count + len(metadataRefs)
+	}
+	if len(req.Images) > 1 {
 		count += len(req.Images)
 	}
 	return count
