@@ -581,7 +581,7 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || (relayInfo.PriceData.UsePrice && len(relayInfo.PriceData.OtherRatios) == 0),
+			PerCallBilling:  shouldUsePerCallBilling(relayInfo.OriginModelName, relayInfo.PriceData),
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -602,6 +602,10 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
+}
+
+func shouldUsePerCallBilling(originModelName string, priceData types.PriceData) bool {
+	return common.StringsContains(constant.TaskPricePatches, originModelName) || (priceData.UsePrice && len(priceData.OtherRatios) == 0)
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {
