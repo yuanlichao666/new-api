@@ -25,11 +25,11 @@ func TestEstimateBilling_TextToVideoDurationResolutionAndInputImages(t *testing.
 		Prompt:   "make a product video",
 		Duration: 10,
 		Metadata: map[string]interface{}{
-			"resolution":             "720p",
+			"resolution":           "720p",
 			"reference_image_urls": []interface{}{"https://example.com/a.png", "https://example.com/b.png"},
 		},
 	}
-	info := &relaycommon.RelayInfo{Action: "textGenerate"}
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: "textGenerate"}}
 
 	ratios := adaptor.EstimateBilling(testContextWithTaskRequest(req), info)
 
@@ -51,7 +51,7 @@ func TestEstimateBilling_ExtendVideoIncludesInputVideoSeconds(t *testing.T) {
 			"input_video_seconds": 12,
 		},
 	}
-	info := &relaycommon.RelayInfo{Action: "remixGenerate"}
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: "remixGenerate"}}
 
 	ratios := adaptor.EstimateBilling(testContextWithTaskRequest(req), info)
 
@@ -110,7 +110,7 @@ func TestBuildVideoRequestForEditVideoUsesVideoPayload(t *testing.T) {
 			"video_url": "https://example.com/input.mp4",
 		},
 	}
-	info := &relaycommon.RelayInfo{UpstreamModelName: "grok-imagine-video", Action: "generate"}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "grok-imagine-video"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: "generate"}}
 
 	body := buildVideoRequest(req, info)
 
