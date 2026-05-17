@@ -76,23 +76,7 @@ export async function fetchTokenKeys() {
  * @returns {string} 服务器地址
  */
 export function getServerAddress() {
-  let status = localStorage.getItem('status');
-  let serverAddress = '';
-
-  if (status) {
-    try {
-      status = JSON.parse(status);
-      serverAddress = status.server_address || '';
-    } catch (error) {
-      console.error('Failed to parse status from localStorage:', error);
-    }
-  }
-
-  if (!serverAddress) {
-    serverAddress = window.location.origin;
-  }
-
-  return serverAddress;
+  return window.location.origin;
 }
 
 export const CHANNEL_CONN_CLIPBOARD_TYPE = 'newapi_channel_conn';

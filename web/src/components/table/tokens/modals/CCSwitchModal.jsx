@@ -53,13 +53,6 @@ const APP_CONFIGS = {
 };
 
 function getServerAddress() {
-  try {
-    const raw = localStorage.getItem('status');
-    if (raw) {
-      const status = JSON.parse(raw);
-      if (status.server_address) return status.server_address;
-    }
-  } catch (_) {}
   return window.location.origin;
 }
 

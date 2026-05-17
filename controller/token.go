@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
@@ -160,6 +163,149 @@ func GetTokenUsage(c *gin.Context) {
 			"model_limits":         token.GetModelLimitsMap(),
 			"model_limits_enabled": token.ModelLimitsEnabled,
 			"expires_at":           expiredAt,
+		},
+	})
+}
+
+type anonymousTokenUsageQueryRequest struct {
+	APIKey         string `json:"api_key"`
+	Page           int    `json:"p"`
+	PageSize       int    `json:"page_size"`
+	Type           int    `json:"type"`
+	StartTimestamp int64  `json:"start_timestamp"`
+	EndTimestamp   int64  `json:"end_timestamp"`
+	ModelName      string `json:"model_name"`
+	RequestId      string `json:"request_id"`
+}
+
+const anonymousTokenUsageQueryError = "API Key 无效或不可查询"
+
+func normalizeAnonymousAPIKey(input string) (string, bool) {
+	key := strings.TrimSpace(input)
+	if key == "" {
+		return "", false
+	}
+
+	fields := strings.Fields(key)
+	if len(fields) == 2 && strings.EqualFold(fields[0], "bearer") {
+		key = fields[1]
+	}
+
+	key = strings.TrimSpace(key)
+	key = strings.TrimPrefix(key, "sk-")
+	key = strings.Split(key, "-")[0]
+	if key == "" {
+		return "", false
+	}
+	return key, true
+}
+
+func buildTokenUsagePayload(token *model.Token) gin.H {
+	expiredAt := token.ExpiredTime
+	if expiredAt == -1 {
+		expiredAt = 0
+	}
+
+	return gin.H{
+		"object":               "token_usage",
+		"name":                 token.Name,
+		"total_granted":        token.RemainQuota + token.UsedQuota,
+		"total_used":           token.UsedQuota,
+		"total_available":      token.RemainQuota,
+		"unlimited_quota":      token.UnlimitedQuota,
+		"model_limits":         token.GetModelLimitsMap(),
+		"model_limits_enabled": token.ModelLimitsEnabled,
+		"expires_at":           expiredAt,
+	}
+}
+
+func isAnonymousTokenUsageQueryable(c *gin.Context, token *model.Token) bool {
+	if token == nil || token.Status != common.TokenStatusEnabled {
+		return false
+	}
+	if token.ExpiredTime != -1 && token.ExpiredTime < common.GetTimestamp() {
+		return false
+	}
+
+	allowIps := token.GetIpLimits()
+	if len(allowIps) > 0 {
+		clientIp := net.ParseIP(c.ClientIP())
+		if clientIp == nil || !common.IsIpInCIDRList(clientIp, allowIps) {
+			return false
+		}
+	}
+
+	userCache, err := model.GetUserCache(token.UserId)
+	if err != nil {
+		common.SysError(fmt.Sprintf("anonymous token usage query failed to get user cache for user %d: %v", token.UserId, err))
+		return false
+	}
+	return userCache.Status == common.UserStatusEnabled
+}
+
+func QueryTokenUsageAnonymous(c *gin.Context) {
+	req := anonymousTokenUsageQueryRequest{
+		Page:     1,
+		PageSize: common.ItemsPerPage,
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorMsg(c, anonymousTokenUsageQueryError)
+		return
+	}
+
+	key, ok := normalizeAnonymousAPIKey(req.APIKey)
+	if !ok {
+		common.ApiErrorMsg(c, anonymousTokenUsageQueryError)
+		return
+	}
+
+	token, err := model.GetTokenByKey(key, false)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError("anonymous token usage query failed to get token: " + err.Error())
+		}
+		common.ApiErrorMsg(c, anonymousTokenUsageQueryError)
+		return
+	}
+
+	if !isAnonymousTokenUsageQueryable(c, token) {
+		common.ApiErrorMsg(c, anonymousTokenUsageQueryError)
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 {
+		req.PageSize = common.ItemsPerPage
+	}
+	if req.PageSize > 100 {
+		req.PageSize = 100
+	}
+
+	startIdx := (req.Page - 1) * req.PageSize
+	logs, total, err := model.GetAnonymousTokenLogs(
+		token.Id,
+		req.Type,
+		req.StartTimestamp,
+		req.EndTimestamp,
+		strings.TrimSpace(req.ModelName),
+		strings.TrimSpace(req.RequestId),
+		startIdx,
+		req.PageSize,
+	)
+	if err != nil {
+		common.ApiErrorMsg(c, anonymousTokenUsageQueryError)
+		return
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"usage": buildTokenUsagePayload(token),
+		"logs": gin.H{
+			"page":      req.Page,
+			"page_size": req.PageSize,
+			"total":     int(total),
+			"items":     logs,
 		},
 	})
 }

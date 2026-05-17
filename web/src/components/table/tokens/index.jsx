@@ -221,15 +221,7 @@ function TokensPage() {
       return;
     }
 
-    let status = localStorage.getItem('status');
-    let serverAddress = '';
-    if (status) {
-      try {
-        status = JSON.parse(status);
-        serverAddress = status.server_address || '';
-      } catch (_) {}
-    }
-    if (!serverAddress) serverAddress = window.location.origin;
+    let serverAddress = window.location.origin;
 
     let apiKeyToUse = '';
     if (overrideKey) {

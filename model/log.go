@@ -72,6 +72,70 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	return logs, err
 }
 
+func formatAnonymousTokenLogs(logs []*Log, startIdx int) {
+	formatUserLogs(logs, startIdx)
+	for i := range logs {
+		logs[i].UserId = 0
+		logs[i].Username = ""
+		logs[i].ChannelId = 0
+		logs[i].ChannelName = ""
+		logs[i].TokenId = 0
+		logs[i].Ip = ""
+		var otherMap map[string]interface{}
+		otherMap, _ = common.StrToMap(logs[i].Other)
+		if otherMap != nil {
+			delete(otherMap, "admin_info")
+			delete(otherMap, "reject_reason")
+			delete(otherMap, "stream_status")
+		}
+		logs[i].Other = common.MapToJsonStr(otherMap)
+	}
+}
+
+func GetAnonymousTokenLogs(tokenId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, requestId string, startIdx int, num int) (logs []*Log, total int64, err error) {
+	if num <= 0 || num > logSearchCountLimit {
+		num = logSearchCountLimit
+	}
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	tx := LOG_DB.Where("logs.token_id = ?", tokenId)
+	if logType != LogTypeUnknown {
+		tx = tx.Where("logs.type = ?", logType)
+	}
+	if modelName != "" {
+		modelNamePattern, err := sanitizeLikePattern(modelName)
+		if err != nil {
+			return nil, 0, err
+		}
+		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
+	}
+	if requestId != "" {
+		tx = tx.Where("logs.request_id = ?", requestId)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	}
+
+	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	if err != nil {
+		common.SysError("failed to count anonymous token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	if err != nil {
+		common.SysError("failed to query anonymous token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+
+	formatAnonymousTokenLogs(logs, startIdx)
+	return logs, total, nil
+}
+
 func RecordLog(userId int, logType int, content string) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return

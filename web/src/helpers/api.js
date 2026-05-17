@@ -299,8 +299,9 @@ export async function onOIDCClicked(
 export async function onGitHubOAuthClicked(github_client_id, options = {}) {
   const state = await prepareOAuthState(options);
   if (!state) return;
+  const redirect_uri = `${window.location.origin}/oauth/github`;
   redirectToOAuthUrl(
-    `https://github.com/login/oauth/authorize?client_id=${github_client_id}&state=${state}&scope=user:email`,
+    `https://github.com/login/oauth/authorize?client_id=${github_client_id}&state=${state}&scope=user:email&redirect_uri=${encodeURIComponent(redirect_uri)}`,
   );
 }
 

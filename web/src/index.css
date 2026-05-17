@@ -870,6 +870,19 @@ html.dark .with-pastel-balls::before {
   background: transparent;
 }
 
+.usage-query-page input:-webkit-autofill,
+.usage-query-page input:-webkit-autofill:hover,
+.usage-query-page input:-webkit-autofill:focus,
+.usage-query-page textarea:-webkit-autofill,
+.usage-query-page textarea:-webkit-autofill:hover,
+.usage-query-page textarea:-webkit-autofill:focus {
+  box-shadow: 0 0 0 1000px var(--semi-color-fill-0) inset !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--semi-color-fill-0) inset !important;
+  -webkit-text-fill-color: var(--semi-color-text-0) !important;
+  caret-color: var(--semi-color-text-0) !important;
+  transition: background-color 9999s ease-out 0s;
+}
+
 @media (max-width: 767px) {
   .table-scroll-card {
     height: calc(100vh - 77px);

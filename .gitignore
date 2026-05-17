@@ -14,6 +14,8 @@ one-api
 new-api
 /__debug_bin*
 .DS_Store
+__pycache__/
+*.pyc
 tiktoken_cache
 .eslintcache
 .gocache

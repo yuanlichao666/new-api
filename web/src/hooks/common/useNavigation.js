@@ -26,12 +26,13 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
       home: true,
       console: true,
       pricing: true,
+      usage: true,
       docs: true,
       about: true,
     };
 
-    // 使用传入的配置或默认配置
-    const modules = headerNavModules || defaultModules;
+    // 使用传入的配置或默认配置；新增模块缺省显示，兼容旧配置。
+    const modules = { ...defaultModules, ...(headerNavModules || {}) };
 
     const allLinks = [
       {
@@ -48,6 +49,11 @@ export const useNavigation = (t, docsLink, headerNavModules) => {
         text: t('模型广场'),
         itemKey: 'pricing',
         to: '/pricing',
+      },
+      {
+        text: t('用量查询'),
+        itemKey: 'usage',
+        to: '/usage',
       },
       ...(docsLink
         ? [
