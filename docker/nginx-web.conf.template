@@ -1,0 +1,86 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+map $http_x_forwarded_proto $proxy_x_forwarded_proto {
+    default $http_x_forwarded_proto;
+    ''      $scheme;
+}
+
+map $http_x_real_ip $proxy_x_real_ip {
+    default $http_x_real_ip;
+    ''      $remote_addr;
+}
+
+upstream newapi_backend {
+    server ${NEW_API_BACKEND_HOST}:${NEW_API_BACKEND_PORT};
+    keepalive 32;
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 64m;
+
+    location = /shadow {
+        deny all;
+    }
+
+    location ^~ /shadow/ {
+        deny all;
+    }
+
+    location ~* (^|/)(?:\.env(?:\..*)?|\.git|\.gitignore|\.svn|\.hg|\.bzr)(?:/|$) {
+        deny all;
+    }
+
+    location ~* (^|/)\.(?!well-known(?:/|$)) {
+        deny all;
+    }
+
+    location ~* \.(?:map|bak|backup|old|orig|save|tmp|swp|swo|zip|tar|tgz|gz|bz2|xz|7z|rar|sql|sqlite|db)$ {
+        deny all;
+    }
+
+    location ~ ^/(api|v1|v1beta|pg|dashboard|mj|[^/]+/mj|suno|luma|gemini|claude|anthropic|kling|jimeng)(/|$) {
+        proxy_pass http://newapi_backend;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $proxy_x_real_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /logo.png {
+        try_files $uri =404;
+        expires 1h;
+    }
+
+    location = /robots.txt {
+        try_files $uri =404;
+        expires 1h;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+}

@@ -1,0 +1,11 @@
+FROM nginx:1-alpine
+
+ENV NEW_API_BACKEND_HOST=new-api-backend
+ENV NEW_API_BACKEND_PORT=3000
+
+COPY docker/nginx-web.conf.template /etc/nginx/newapi/default.conf.template
+COPY docker/19-render-newapi-conf.sh /docker-entrypoint.d/19-render-newapi-conf.sh
+RUN chmod +x /docker-entrypoint.d/19-render-newapi-conf.sh
+COPY web/dist/ /usr/share/nginx/html/
+
+EXPOSE 8080

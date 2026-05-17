@@ -1,0 +1,41 @@
+name: new-api-stack
+
+services:
+  new-api-backend:
+    image: ${NEWAPI_BACKEND_IMAGE:?set NEWAPI_BACKEND_IMAGE to ghcr digest}
+    container_name: new-api-backend
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    env_file:
+      - ./backend.env
+    expose:
+      - "3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/status >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - newapi-app
+
+  new-api-web:
+    image: ${NEWAPI_WEB_IMAGE:?set NEWAPI_WEB_IMAGE to ghcr digest}
+    container_name: new-api-web
+    restart: unless-stopped
+    depends_on:
+      new-api-backend:
+        condition: service_healthy
+    environment:
+      NEW_API_BACKEND_HOST: new-api-backend
+      NEW_API_BACKEND_PORT: "3000"
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks:
+      - newapi-app
+
+networks:
+  newapi-app:
+    driver: bridge

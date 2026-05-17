@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.meta.outputs.image }}
+      web_image: ${{ steps.meta.outputs.web_image }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
       version: ${{ steps.meta.outputs.version }}
     steps:
@@ -47,13 +48,15 @@ jobs:
           fi
 
           echo "image=ghcr.io/${repo}" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/${repo}-web" >> "$GITHUB_OUTPUT"
           echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
           {
             echo "### Token1688 build metadata"
             echo
-            echo "- Image: \`ghcr.io/${repo}\`"
+            echo "- API image: \`ghcr.io/${repo}\`"
+            echo "- Web image: \`ghcr.io/${repo}-web\`"
             echo "- Version: \`${version}\`"
             echo "- Commit: \`${GITHUB_SHA}\`"
             echo "- Run: \`${GITHUB_RUN_ID}\`"
@@ -101,11 +104,16 @@ jobs:
           if-no-files-found: error
 
   image:
-    name: Build and push image
+    name: Build and push images
     needs:
       - prepare
       - web-dist
     runs-on: ubuntu-latest
+    outputs:
+      api_digest: ${{ steps.image_meta.outputs.api_digest }}
+      web_digest: ${{ steps.image_meta.outputs.web_digest }}
+      api_deploy_ref: ${{ steps.image_meta.outputs.api_deploy_ref }}
+      web_deploy_ref: ${{ steps.image_meta.outputs.web_deploy_ref }}
     permissions:
       contents: read
       packages: write
@@ -129,16 +137,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push runtime image
-        id: build
+      - name: Download frontend dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-${{ needs.prepare.outputs.version }}
+          path: web-dist-artifact
+
+      - name: Restore frontend dist
+        run: |
+          rm -rf web/dist
+          tar -xzf "web-dist-artifact/web-dist-${{ needs.prepare.outputs.version }}.tar.gz" -C web
+          (cd web && sha256sum -c "../web-dist-artifact/web-dist-${{ needs.prepare.outputs.version }}.sha256")
+          test -s web/dist/index.html
+
+      - name: Build and push API image
+        id: build_api
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.api
           platforms: linux/amd64
           push: true
-          build-args: |
-            FRONTEND_NODE_OPTIONS=--max-old-space-size=4096
           tags: |
             ${{ needs.prepare.outputs.image }}:sha-${{ needs.prepare.outputs.short_sha }}
             ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
@@ -146,33 +165,74 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=token1688-api
+          cache-to: type=gha,scope=token1688-api,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Build and push web image
+        id: build_web
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./Dockerfile.web
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ needs.prepare.outputs.web_image }}:sha-${{ needs.prepare.outputs.short_sha }}
+            ${{ needs.prepare.outputs.web_image }}:${{ needs.prepare.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha,scope=token1688-web
+          cache-to: type=gha,scope=token1688-web,mode=max
           provenance: true
           sbom: true
 
       - name: Write image metadata
+        id: image_meta
         run: |
           cat > image-metadata.txt <<EOF
           image=${{ needs.prepare.outputs.image }}
+          api_image=${{ needs.prepare.outputs.image }}
+          web_image=${{ needs.prepare.outputs.web_image }}
           version=${{ needs.prepare.outputs.version }}
           short_sha=${{ needs.prepare.outputs.short_sha }}
           commit=${{ github.sha }}
           workflow_run=${{ github.run_id }}
+          release_unit=api_web_pair
+          deploy_ref_scope=api_legacy
           tag_sha=${{ needs.prepare.outputs.image }}:sha-${{ needs.prepare.outputs.short_sha }}
           tag_version=${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
-          digest=${{ steps.build.outputs.digest }}
-          deploy_ref=${{ needs.prepare.outputs.image }}@${{ steps.build.outputs.digest }}
+          api_tag_sha=${{ needs.prepare.outputs.image }}:sha-${{ needs.prepare.outputs.short_sha }}
+          api_tag_version=${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
+          digest=${{ steps.build_api.outputs.digest }}
+          api_digest=${{ steps.build_api.outputs.digest }}
+          deploy_ref=${{ needs.prepare.outputs.image }}@${{ steps.build_api.outputs.digest }}
+          api_deploy_ref=${{ needs.prepare.outputs.image }}@${{ steps.build_api.outputs.digest }}
+          web_tag_sha=${{ needs.prepare.outputs.web_image }}:sha-${{ needs.prepare.outputs.short_sha }}
+          web_tag_version=${{ needs.prepare.outputs.web_image }}:${{ needs.prepare.outputs.version }}
+          web_digest=${{ steps.build_web.outputs.digest }}
+          web_deploy_ref=${{ needs.prepare.outputs.web_image }}@${{ steps.build_web.outputs.digest }}
           EOF
 
+          echo "api_digest=${{ steps.build_api.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "web_digest=${{ steps.build_web.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "api_deploy_ref=${{ needs.prepare.outputs.image }}@${{ steps.build_api.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "web_deploy_ref=${{ needs.prepare.outputs.web_image }}@${{ steps.build_web.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
           {
-            echo "### Token1688 image"
+            echo "### Token1688 images"
             echo
-            echo "- Image: \`${{ needs.prepare.outputs.image }}\`"
+            echo "- API image: \`${{ needs.prepare.outputs.image }}\`"
             echo "- Version tag: \`${{ needs.prepare.outputs.version }}\`"
             echo "- SHA tag: \`sha-${{ needs.prepare.outputs.short_sha }}\`"
-            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
-            echo "- Deploy ref: \`${{ needs.prepare.outputs.image }}@${{ steps.build.outputs.digest }}\`"
+            echo "- API digest: \`${{ steps.build_api.outputs.digest }}\`"
+            echo "- API deploy ref: \`${{ needs.prepare.outputs.image }}@${{ steps.build_api.outputs.digest }}\`"
+            echo "- Web image: \`${{ needs.prepare.outputs.web_image }}\`"
+            echo "- Web digest: \`${{ steps.build_web.outputs.digest }}\`"
+            echo "- Web deploy ref: \`${{ needs.prepare.outputs.web_image }}@${{ steps.build_web.outputs.digest }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload image metadata artifact
