@@ -8,3 +8,14 @@ docs
 .eslintcache
 .gocache
 /web/node_modules
+.env
+.env.*
+*.log
+*.sql
+*.sql.gz
+*.tar
+*.tar.gz
+*.zip
+backups
+db-backups
+test-artifacts
