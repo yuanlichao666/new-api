@@ -3,6 +3,12 @@
 This directory contains token1688-specific operational assets that must be
 versioned together with the NewAPI fork.
 
+This directory is the canonical release source for channel 47 operational
+assets. Do not publish the channel 47 shim, systemd service, or env templates
+from `newapi/30-ops/systemd`; those same-name files are historical operations
+records only. Update and review this directory first, then copy approved
+artifacts during an explicit rollout.
+
 ## Codex DeepSeek Channel Proxy
 
 `shims/deepseek_codex_channel_proxy.py` is the channel-local proxy for the

@@ -1,6 +1,8 @@
 package router
 
 import (
+	"net/http"
+
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 
@@ -265,11 +267,18 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		usageRoute := apiRouter.Group("/usage")
-		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
-			usageRoute.POST("/token/query", controller.QueryTokenUsageAnonymous)
+			anonymousTokenUsageRoute := usageRoute.Group("/token/query")
+			anonymousTokenUsageRoute.Use(middleware.DisableCache(), middleware.AnonymousTokenUsageCORS(), middleware.CriticalRateLimit())
+			{
+				anonymousTokenUsageRoute.OPTIONS("", func(c *gin.Context) {
+					c.Status(http.StatusNoContent)
+				})
+				anonymousTokenUsageRoute.POST("", controller.QueryTokenUsageAnonymous)
+			}
+
 			tokenUsageRoute := usageRoute.Group("/token")
-			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
+			tokenUsageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit(), middleware.TokenAuthReadOnly())
 			{
 				tokenUsageRoute.GET("/", controller.GetTokenUsage)
 			}
